@@ -13,7 +13,9 @@ Responsibilities:
 
 from __future__ import annotations
 
-from asyncio.log import logger
+import logging
+logger = logging.getLogger(__name__)
+
 import uuid
 from collections import Counter
 from datetime import datetime
