@@ -1,0 +1,107 @@
+####################################
+# OS / Editor junk
+####################################
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
+
+####################################
+# Python / FastAPI
+####################################
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+
+.venv/
+venv/
+ENV/
+env/
+
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+
+####################################
+# Environment variables / secrets
+####################################
+.env
+.env.*
+!.env.example
+
+####################################
+# Database / local data
+####################################
+backend/data/*
+!backend/data/.gitkeep
+
+*.sqlite
+*.sqlite3
+*.db
+
+####################################
+# FAISS / ML artifacts
+####################################
+*.index
+*.faiss
+*.npy
+*.npz
+*.pt
+*.onnx
+*.pkl
+
+####################################
+# Logs & uploads
+####################################
+*.log
+uploads/
+tmp/
+temp/
+
+####################################
+# Node / React / Tailwind (future frontend)
+####################################
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+####################################
+# Frontend build outputs
+####################################
+dist/
+build/
+out/
+
+####################################
+# Vite / CRA / Next.js caches
+####################################
+.vite/
+.cache/
+.next/
+.vercel/
+
+####################################
+# Tailwind / PostCSS
+####################################
+.tailwind/
+.postcss/
+
+####################################
+# Coverage / reports
+####################################
+coverage/
+reports/
+
+####################################
+# Misc
+####################################
+*.tgz
+*.tar.gz
+*.zip

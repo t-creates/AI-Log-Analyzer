@@ -1,0 +1,187 @@
+# Technical Plan: AI Log Analyzer Agent
+
+## 1. Problem Understanding
+
+[2-3 sentences explaining why log analysis is challenging and how AI can help]
+
+Log analysis is challenging due to the large amount of log data to analyze and time it takes to analyze. AI can help with the challenge by optimizing the log search and anomaly detection, and by summarizing the results for actionable steps, mitigation, and root causes.
+
+
+**Core Problem:**
+- [What makes searching through operational logs difficult?]
+The amount of data generated from the logs, formatting, and the inability to search natural language make it difficult to find and detect patterns. 
+
+**Target User:**
+- [Who uses this tool? Operations engineers? Maintenance teams?]
+For Operations Engineers they could use the application to review and analysis systems to improve performance, training, review incidents.
+
+Maintenance Teams could use it for detecting when maintenance is needed, creating predictions scheduling of future maintenance. 
+
+
+**Success Criteria:**
+- [How do you know your log analyzer is useful?]
+I know it is useful if it accepts the proper data, and can return the user through the search, fast accurate results with an clear user interface. Finally the AI summarization, includes actionable steps, accurate summarization, root causes.   
+---
+
+## 2. Architecture Overview
+
+**Components:**
+
+| Component | Technology | Purpose |
+|-----------|------------|---------|
+| Frontend | React, Datatables | Interactive user interface, that take data input, search input, display AI summarization, log results, call the apis |
+| Backend | FastAPI | Receive the request from Client(React), Process. |
+| LLM Integration | Google AI Studio | Summarize the log files |
+| Database | SQLite | Store and index the log files |
+| Search Layer | FAISS | embedding and vector search |
+
+**System Flow:**
+1. User uploads log file (CSV/TXT)
+2. Backend parses and stores log entries
+3. User semantic search input
+4. Backend do a embedded vector search
+5. Summarization and content AI Studio
+6. User sees AI-generated answer with cited log entries
+6. Display relevant charts or graphs
+---
+
+## 3. LLM Strategy
+
+**Provider & Model:**
+Google AI Studio (Gemini)
+
+**How LLM Will Be Used:**
+
+| Use Case | LLM Role |
+|----------|----------|
+| Query Understanding | Standardized prompt, scenario, and return format.  |
+| Answer Generation | Generation based the log file contents |
+| Summarization | System and operation alerts and warnings |
+
+**Prompt Approach:**
+[Describe your prompting strategy — what context will you provide to the LLM?]
+Standardized, context - scenario, return format which will include a blanket statement if it does not detect anomalies or cannot return a valid response.
+
+**Citation Strategy:**
+[How will you ensure answers reference specific log entries?]
+I will add a unique to each log, and cite based on the id.
+---
+
+## 4. Search Strategy
+
+**Approach Chosen:**
+Semantic search
+
+**If using keyword search:**
+- [How will you match user queries to log entries?]
+
+**If using semantic search (optional):**
+- [What embedding model will you use?]
+FIASS model. 
+- [How will you store and query embeddings?]
+I will store them in chunks, sized to be determined based on relevance after some testing
+**Ranking/Relevance:**
+- [How will you determine which logs are most relevant?]
+related to search queries. Setting the chunk size and testing.
+---
+
+## 5. API Design
+
+| Endpoint | Method | Purpose |
+|----------|--------|---------|
+| `/upload` | POST | received data files, parse, valid, load to database |
+| `/query` | POST | search and return related log files  |
+| `/summary` | GET | summarize the log files |
+| `/logs` | GET | return all logs paginated  |
+
+---
+
+## 6. Data Approach
+
+**Sample Log Structure:**
+[Describe the log format you will create]
+It will be formatted by date, log quality, warnings/alerts, operation, location, equipment, reasoning, scenarios  
+**Key Log Fields:**
+- Date
+- Id
+- Location
+- Equipment
+
+**Log Scenarios to Include:**
+- Normal operations
+- Warning conditions
+- Critical incidents
+- Related/correlated events
+
+---
+
+## 7. UI Wireframe Description
+
+**Screen 1: Upload Page**
+- [What elements will be on this screen?]
+search input
+upload input
+log list 
+log summary
+chart/graph (maybe)
+- dynamic loader
+
+**Screen 1: Query Interface**
+- [How will users ask questions?]
+- [How will results be displayed?]
+Search input that has a place holder or an example question
+Log card component/datatable sort options list sorted by relevance
+
+**Screen 1: Summary Dashboard**
+- [What auto-generated insights will appear?]
+general summary of legs
+actionable steps
+possbile mitigations
+root cause 
+
+---
+
+## 8. Trade-offs & Decisions
+
+**Decision 1: [Topic, e.g., "Embedding vs Keyword Search"]**
+- Chose: Embedding
+- Reason: Fast, natural language queries are better for the user intended related logs. 
+
+**Decision 2: [Topic, e.g., "Context window management"]**
+- Chose: Gemini
+- Reason: All around purpose, test based.
+
+**Known Limitations:**
+- [What won't your MVP handle?]
+It certain input data file formats.
+to ambiguous of searches 
+ai context size trying to summarize to many logs
+---
+
+## 9. MVP Scope
+
+**Will Build:**
+- [X] Log file upload and parsing
+- [X] Natural language query interface
+- [X] LLM-powered search and answer generation
+- [X] Citation of source log entries
+- [X] Semantic search with embeddings
+
+**Stretch Goals (If Time Permits):**
+- [X] Anomaly pattern detection
+- [X] Time-range filtering
+- [X] Dynamic Chart/Graph 
+
+---
+
+## 10. Timeline Estimate
+
+| Phase | Estimated Time |
+|-------|----------------|
+| Setup & Sample Data | [1 hours] |
+| Backend API & Database | [2 hours] |
+| LLM Integration | [1 hours] |
+| Search Implementation | [1 hours] |
+| Frontend UI | [1 hours] |
+| Testing & Polish | [1 hours] |
+
