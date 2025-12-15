@@ -46,7 +46,7 @@ class Settings(BaseSettings):
     # -----------------------
     # Default to common local dev ports (Vite/React 5173, CRA 3000).
     CORS_ALLOW_ORIGINS: List[str] = Field(
-        default_factory=lambda: ["http://localhost:5173", "http://localhost:3000"],
+        default_factory=lambda: ["http://localhost:5173", "http://localhost:3000", "https://ai-log-analyzer-1-gzfi.onrender.com"],
         description="Allowed CORS origins for the frontend",
     )
 
