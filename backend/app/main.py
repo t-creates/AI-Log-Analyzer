@@ -24,6 +24,15 @@ from app.core.executors import faiss_executor
 import logging
 logger = logging.getLogger("app")
 
+# app/main.py (TOP OF FILE — before importing anything heavy)
+import os
+os.environ["OMP_NUM_THREADS"] = "1"
+os.environ["MKL_NUM_THREADS"] = "1"
+os.environ["OPENBLAS_NUM_THREADS"] = "1"
+os.environ["VECLIB_MAXIMUM_THREADS"] = "1"
+os.environ["NUMEXPR_NUM_THREADS"] = "1"
+
+
 # -------------------------
 # Response helpers (MVP)
 # -------------------------

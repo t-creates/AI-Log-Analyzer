@@ -23,6 +23,7 @@ from datetime import datetime
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from fastapi import BackgroundTasks
 
 from app.db.models import IngestedFile, LogEntry
 from app.db.session import get_session
@@ -35,6 +36,7 @@ router = APIRouter()
 
 @router.post("/upload", response_model=UploadResponse)
 async def upload_logs(
+    background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     session: AsyncSession = Depends(get_session),
 ):
@@ -118,15 +120,17 @@ async def upload_logs(
     # Semantic indexing (embeddings + FAISS)
     # -----------------------
     try:
-        index_log_entries_for_search(
+    # 🔥 Move indexing to background
+        background_tasks.add_task(
+            index_log_entries_for_search,
             log_ids=[r.log_id for r in log_rows],
             sources=[r.source for r in log_rows],
             severities=[r.severity for r in log_rows],
             messages=[r.message for r in log_rows],
         )
     except Exception as e:
-        logger.exception("Indexing failed")
-        raise HTTPException(status_code=500, detail="Indexing failed; logs were ingested but search index was not updated.", error=e)
+        logger.exception("Indexing failed: %s", e)
+        raise HTTPException(status_code=500, detail="Indexing failed; logs were ingested but search index was not updated.")
 
 
     # -----------------------

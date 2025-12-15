@@ -21,12 +21,12 @@ import os
 from typing import Dict, List, Tuple
 
 import faiss
+#faiss.omp_set_num_threads(1)
 import numpy as np
 import threading
 
 from app.core.config import settings
 
-#faiss.omp_set_num_threads(1)
 _INDEX_LOCK = threading.RLock()
 
 # In-memory singleton state (simple + fast for MVP).
@@ -96,21 +96,21 @@ def add_embeddings(log_ids: List[str], embeddings: np.ndarray) -> None:
       Our embed_service currently normalizes embeddings.
     """
     global _next_row_id, _idmap
+    with _INDEX_LOCK:
+        if embeddings is None or embeddings.size == 0:
+            return
 
-    if embeddings is None or embeddings.size == 0:
-        return
+        if embeddings.dtype != np.float32:
+            embeddings = embeddings.astype("float32")
 
-    if embeddings.dtype != np.float32:
-        embeddings = embeddings.astype("float32")
+        if embeddings.ndim != 2:
+            raise ValueError("Embeddings must be a 2D array of shape (n, d).")
 
-    if embeddings.ndim != 2:
-        raise ValueError("Embeddings must be a 2D array of shape (n, d).")
+        n, d = embeddings.shape
+        if n != len(log_ids):
+            raise ValueError("log_ids length must match embeddings rows.")
 
-    n, d = embeddings.shape
-    if n != len(log_ids):
-        raise ValueError("log_ids length must match embeddings rows.")
-
-    embeddings = np.ascontiguousarray(embeddings, dtype="float32")
+        embeddings = np.ascontiguousarray(embeddings, dtype="float32")
 
     with _INDEX_LOCK:
         _ensure_index(d)
@@ -173,20 +173,23 @@ def search(query_embedding: np.ndarray, k: int = 20) -> List[Tuple[str, float]]:
 
 
 def persist() -> None:
-    """
-    Persist FAISS index + id map to disk.
-
-    Called after ingestion indexing and during shutdown.
-    """
     with _INDEX_LOCK:
         if _index is None:
             return
 
         os.makedirs(os.path.dirname(settings.FAISS_INDEX_PATH) or ".", exist_ok=True)
-        faiss.write_index(_index, settings.FAISS_INDEX_PATH)
 
-        with open(settings.FAISS_IDMAP_PATH, "w", encoding="utf-8") as f:
+        tmp_idx = settings.FAISS_INDEX_PATH + ".tmp"
+        tmp_map = settings.FAISS_IDMAP_PATH + ".tmp"
+
+        faiss.write_index(_index, tmp_idx)
+
+        with open(tmp_map, "w", encoding="utf-8") as f:
             json.dump({str(k): v for k, v in _idmap.items()}, f)
+
+        os.replace(tmp_idx, settings.FAISS_INDEX_PATH)
+        os.replace(tmp_map, settings.FAISS_IDMAP_PATH)
+
 
 
 async def shutdown_faiss() -> None:

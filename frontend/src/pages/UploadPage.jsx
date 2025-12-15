@@ -34,7 +34,7 @@ export default function UploadPage() {
           type="file"
           accept=".csv,.txt"
           onChange={(e) => setFile(e.target.files?.[0] || null)}
-          className="block w-full text-sm"
+          className="block w-full text-sm p-24 border-2 border-dashed rounded-lg cursor-pointer bg-gray-50 border-gray-300 text-gray-600 hover:bg-gray-100 focus:outline-none"
         />
 
         <div className="flex items-center gap-3">
