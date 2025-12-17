@@ -4,6 +4,7 @@ import time
 import uuid
 from typing import Any, Dict, Optional
 
+import asyncio
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
@@ -185,6 +186,7 @@ async def on_startup():
     from app.db.session import init_db
     from app.services.faiss_service import init_faiss
     from app.services.gemini_service import gemini_enabled
+    from app.services.embed_service import embed_texts
 
     await init_db()
     await init_faiss()
@@ -193,6 +195,13 @@ async def on_startup():
         logger.info("Gemini enabled (model=%s)", settings.GEMINI_MODEL)
     else:
         logger.warning("Gemini disabled; set GEMINI_API_KEY to enable AI answers.")
+
+    # Warm up embedding model so the first request doesn't block on download.
+    try:
+        await asyncio.to_thread(embed_texts, ["startup warmup"])
+        logger.info("Embedding model warmup complete.")
+    except Exception:
+        logger.exception("Embedding warmup failed (requests may incur first-hit latency).")
 
 
 @app.on_event("shutdown")
