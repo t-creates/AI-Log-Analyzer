@@ -1,17 +1,11 @@
 # app/services/embed_service.py
 """
-Embedding service using Sentence-Transformers.
+Embedding service backed by Gemini's hosted embedding endpoint.
 
-Responsibilities:
-- Load the embedding model once (singleton in-process cache)
-- Provide a simple function to embed batches of texts
-- Ensure embeddings are returned as float32 numpy arrays
-- Normalize embeddings (so FAISS inner product behaves like cosine similarity)
-
-Why normalize?
-- Cosine similarity is the most common semantic-search metric.
-- If vectors are normalized, cosine(a, b) == dot(a, b),
-  which lets us use FAISS IndexFlatIP efficiently.
+Why this approach?
+- Keeps the FastAPI service lightweight (no local SentenceTransformer model)
+- Still returns normalized float32 vectors so FAISS works exactly the same
+- Lets us run on tiny hosts (Render free tier) at the cost of an external API call
 """
 
 from __future__ import annotations
@@ -19,39 +13,30 @@ from __future__ import annotations
 from typing import List
 
 import asyncio
+import logging
 import numpy as np
-from sentence_transformers import SentenceTransformer
+import google.generativeai as genai
 
 from app.core.config import settings
 
-
-# Module-level singleton cache (fast + simple for MVP).
-_model: SentenceTransformer | None = None
+logger = logging.getLogger(__name__)
 
 
-def get_model() -> SentenceTransformer:
-    """
-    Lazily load and cache the SentenceTransformer model.
+class EmbeddingError(RuntimeError):
+    """Raised when Gemini embedding generation fails."""
+    pass
 
-    This prevents expensive reloads per request.
 
-    Note:
-    - This is safe for typical FastAPI deployments where each worker process
-      has its own memory space.
-    - If we later add multi-process indexing or background jobs, we may want
-      a more explicit lifecycle manager.
-    """
-    global _model
-    if _model is None:
-        _model = SentenceTransformer(settings.EMBED_MODEL, device="cpu")
-    return _model
+_client_ready = False
+
 
 async def embed_texts_async(texts: List[str]) -> np.ndarray:
     return await asyncio.to_thread(embed_texts, texts)
 
+
 def embed_texts(texts: List[str]) -> np.ndarray:
     """
-    Generate embeddings for a list of texts.
+    Generate embeddings for a list of texts via Gemini.
 
     Args:
         texts: list of strings to embed
@@ -61,23 +46,54 @@ def embed_texts(texts: List[str]) -> np.ndarray:
 
     Raises:
         ValueError: if texts is empty
+        EmbeddingError: if Gemini call fails or returns malformed data
     """
     if not texts:
         raise ValueError("embed_texts requires a non-empty list of texts.")
 
-    model = get_model()
+    _ensure_gemini_client()
 
-    # normalize_embeddings=True ensures unit-length vectors for cosine similarity.
-    emb = model.encode(
-        texts,
-        normalize_embeddings=True,
-        show_progress_bar=False,
-    )
+    embeddings: list[np.ndarray] = []
+    for text in texts:
+        payload = (text or "").strip()
+        if not payload:
+            payload = " "
+        try:
+            resp = genai.embed_content(
+                model=settings.GEMINI_EMBED_MODEL,
+                content=payload,
+            )
+        except Exception as exc:
+            raise EmbeddingError(f"Gemini embedding failed: {exc}") from exc
 
-    # Sentence-Transformers can return list/np array depending on config.
-    arr = np.asarray(emb, dtype="float32")
+        vector = resp.get("embedding")
+        if not vector:
+            raise EmbeddingError("Gemini embedding response missing 'embedding'.")
 
-    if arr.ndim != 2:
-        raise ValueError("Embedding output must be a 2D array of shape (n, d).")
+        arr = np.asarray(vector, dtype="float32")
+        if arr.ndim != 1:
+            raise EmbeddingError("Gemini embedding must be a 1D vector.")
+        norm = float(np.linalg.norm(arr))
+        if norm > 0:
+            arr = arr / norm
 
-    return arr
+        embeddings.append(arr)
+
+    result = np.vstack(embeddings)
+    if result.ndim != 2:
+        raise EmbeddingError("Unexpected embedding shape from Gemini.")
+
+    return np.ascontiguousarray(result, dtype="float32")
+
+
+def _ensure_gemini_client() -> None:
+    if not settings.GEMINI_API_KEY:
+        raise EmbeddingError("GEMINI_API_KEY is not configured; cannot embed text.")
+
+    global _client_ready
+    if _client_ready:
+        return
+
+    genai.configure(api_key=settings.GEMINI_API_KEY)
+    _client_ready = True
+    logger.info("Configured Gemini client for embedding model %s", settings.GEMINI_EMBED_MODEL)

@@ -105,6 +105,10 @@ class Settings(BaseSettings):
         default="gemini-2.5-flash",
         description="Gemini model name",
     )
+    GEMINI_EMBED_MODEL: str = Field(
+        default="models/text-embedding-004",
+        description="Gemini model used for embeddings",
+    )
 
     # -----------------------
     # Validators / normalizers
@@ -130,7 +134,7 @@ class Settings(BaseSettings):
                 cleaned.append(o)
         return cleaned
 
-    @field_validator("DATABASE_URL", "FAISS_INDEX_PATH", "FAISS_IDMAP_PATH", "EMBED_MODEL", "GEMINI_MODEL")
+    @field_validator("DATABASE_URL", "FAISS_INDEX_PATH", "FAISS_IDMAP_PATH", "EMBED_MODEL", "GEMINI_MODEL", "GEMINI_EMBED_MODEL")
     @classmethod
     def _strip_strings(cls, v: str) -> str:
         # Defensive: eliminates accidental whitespace in env values.
