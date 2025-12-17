@@ -50,7 +50,7 @@ def _ensure_hf_cache_dir() -> None:
             logger.info("Using %s for HuggingFace cache (%s)", path, var)
             return
 
-    default_cache = os.path.abspath(os.path.join(".", ".cache", "huggingface"))
+    default_cache = os.path.abspath(os.path.join("/tmp", "huggingface"))
     os.makedirs(default_cache, exist_ok=True)
     os.environ["HF_HOME"] = default_cache
     logger.info(
@@ -196,12 +196,15 @@ async def on_startup():
     else:
         logger.warning("Gemini disabled; set GEMINI_API_KEY to enable AI answers.")
 
-    # Warm up embedding model so the first request doesn't block on download.
-    try:
-        await asyncio.to_thread(embed_texts, ["startup warmup"])
-        logger.info("Embedding model warmup complete.")
-    except Exception:
-        logger.exception("Embedding warmup failed (requests may incur first-hit latency).")
+    warmup_enabled = os.environ.get("EMBED_WARMUP", "true").strip().lower() not in {"0", "false", "no"}
+    if warmup_enabled:
+        try:
+            await asyncio.to_thread(embed_texts, ["startup warmup"])
+            logger.info("Embedding model warmup complete.")
+        except Exception:
+            logger.exception("Embedding warmup failed (requests may incur first-hit latency).")
+    else:
+        logger.warning("Embedding warmup is disabled; first query may download the model and take longer.")
 
 
 @app.on_event("shutdown")
