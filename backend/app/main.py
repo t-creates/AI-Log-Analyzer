@@ -31,7 +31,7 @@ os.environ["MKL_NUM_THREADS"] = "1"
 os.environ["OPENBLAS_NUM_THREADS"] = "1"
 os.environ["VECLIB_MAXIMUM_THREADS"] = "1"
 os.environ["NUMEXPR_NUM_THREADS"] = "1"
-os.environ["TOKENIZERS_PARALLELISM"] = "false"
+
 
 # -------------------------
 # Response helpers (MVP)
@@ -157,9 +157,15 @@ async def on_startup():
     # These imports are inside startup so we don’t create side effects on import.
     from app.db.session import init_db
     from app.services.faiss_service import init_faiss
+    from app.services.gemini_service import gemini_enabled
 
     await init_db()
     await init_faiss()
+
+    if gemini_enabled():
+        logger.info("Gemini enabled (model=%s)", settings.GEMINI_MODEL)
+    else:
+        logger.warning("Gemini disabled; set GEMINI_API_KEY to enable AI answers.")
 
 
 @app.on_event("shutdown")
@@ -168,4 +174,3 @@ async def on_shutdown():
     from app.services.faiss_service import shutdown_faiss
     faiss_executor.shutdown(wait=False, cancel_futures=True)
     await shutdown_faiss()
-

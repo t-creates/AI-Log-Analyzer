@@ -19,10 +19,12 @@ from __future__ import annotations
 import asyncio
 from typing import Optional
 
+import logging
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 
 from app.core.config import settings
 
+logger = logging.getLogger(__name__)
 
 class GeminiError(RuntimeError):
     """Raised for Gemini-related errors (network, auth, generation)."""
@@ -41,6 +43,7 @@ def _generate_sync(prompt: str) -> str:
     try:
         import google.generativeai as genai
     except Exception as e:
+        logger.exception("Failed to import google-generativeai")
         raise GeminiError(f"google-generativeai import failed: {e}") from e
 
     try:
@@ -50,6 +53,7 @@ def _generate_sync(prompt: str) -> str:
         text = getattr(resp, "text", None) or ""
         return text.strip()
     except Exception as e:
+        logger.exception("Gemini SDK call failed")
         raise GeminiError(str(e)) from e
 
 
@@ -77,6 +81,7 @@ async def generate_text(prompt: str, *, timeout_s: float = 20.0) -> str:
         return ""
 
     if not gemini_enabled():
+        logger.warning("Gemini requested but GEMINI_API_KEY is missing or blank; using heuristic response.")
         return ""
 
     try:
@@ -84,4 +89,5 @@ async def generate_text(prompt: str, *, timeout_s: float = 20.0) -> str:
         coro = asyncio.to_thread(_generate_sync, prompt)
         return await asyncio.wait_for(coro, timeout=timeout_s)
     except asyncio.TimeoutError as e:
+        logger.error("Gemini timed out after %.2fs", timeout_s)
         raise GeminiError(f"Gemini timed out after {timeout_s}s") from e

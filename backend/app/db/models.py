@@ -17,7 +17,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import DateTime, Integer, String, Text
+from sqlalchemy import DateTime, ForeignKey, Integer, LargeBinary, String, Text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -75,3 +75,27 @@ class LogEntry(Base):
 
     # Log message content (may include long text)
     message: Mapped[str] = mapped_column(Text, nullable=False)
+
+
+class LogEmbedding(Base):
+    """
+    Persisted embedding vectors for each log entry (stored as binary blobs).
+
+    Storing embeddings lets us rebuild FAISS or experiment with other search
+    indexes without re-embedding historical logs.
+    """
+
+    __tablename__ = "log_embeddings"
+
+    log_id: Mapped[str] = mapped_column(
+        String(64),
+        ForeignKey("log_entries.log_id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    vector: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+    dimension: Mapped[int] = mapped_column(Integer, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=False),
+        default=datetime.utcnow,
+        nullable=False,
+    )

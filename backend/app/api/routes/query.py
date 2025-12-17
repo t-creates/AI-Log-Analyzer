@@ -18,6 +18,8 @@ Security / reliability notes:
 from __future__ import annotations
 
 from typing import Dict, List, Tuple
+import re
+from collections import Counter
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select, or_
@@ -34,7 +36,7 @@ from app.db.session import get_session
 from app.schemas.query import QueryRequest, QueryResponse, RelevantLog
 from app.services.embed_service import embed_texts_async
 from app.services.faiss_service import search as faiss_search
-from app.services.gemini_service import generate_text, gemini_enabled
+from app.services.gemini_service import GeminiError, generate_text, gemini_enabled
 from app.core.executors import faiss_executor
 
 router = APIRouter()
@@ -148,7 +150,7 @@ async def query_logs(req: QueryRequest, session: AsyncSession = Depends(get_sess
     # ---- Embed (guarded) ----
     t0 = time.perf_counter()
     try:
-        q_emb = await asyncio.wait_for(embed_texts_async([question]), timeout=8.0)
+        q_emb = await asyncio.wait_for(embed_texts_async([question]), timeout=10.0)
     except asyncio.TimeoutError:
         logger.exception("Embedding timed out")
         raise HTTPException(status_code=504, detail="Embedding timed out")
@@ -165,7 +167,7 @@ async def query_logs(req: QueryRequest, session: AsyncSession = Depends(get_sess
         loop = asyncio.get_running_loop()
         hits = await asyncio.wait_for(
             loop.run_in_executor(faiss_executor, faiss_search, q_emb, 20),
-            timeout=2.0
+            timeout=5.0
         )
 
     except asyncio.TimeoutError:
@@ -238,36 +240,75 @@ async def query_logs(req: QueryRequest, session: AsyncSession = Depends(get_sess
     # Response returns top 3 (like your spec). We still pass a bigger set to Gemini.
     relevant_top3 = relevant[:3]
 
+    severity_counts = Counter(r.severity for r in relevant)
+    source_counts = Counter(r.source for r in relevant)
+    if relevant:
+        timestamps_sorted = sorted(r.timestamp for r in relevant)
+        time_window = f"{timestamps_sorted[0]} to {timestamps_sorted[-1]}"
+    else:
+        time_window = "n/a"
+
     # Generate answer: Gemini if available, otherwise heuristic.
     if gemini_enabled() and relevant:
         prompt_context = "\n".join(_format_log_for_prompt(r) for r in relevant[:8])
         now_utc = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+        stats_lines = [
+            f"Total relevant hits considered: {len(relevant)} (returning top 3).",
+            (
+                "Severity counts: "
+                + ", ".join(f"{k}={v}" for k, v in sorted(severity_counts.items()))
+            )
+            if severity_counts
+            else "Severity counts: n/a",
+            (
+                "Sources touched: "
+                + ", ".join(f"{k}({v})" for k, v in sorted(source_counts.items()))
+            )
+            if source_counts
+            else "Sources touched: n/a",
+            f"Time window: {time_window}",
+        ]
+        stats_block = "\n".join(stats_lines)
 
         prompt = (
             f"Current date and time: {now_utc}\n"
             "You are an incident analyst reviewing industrial equipment logs.\n"
             "Use ONLY the provided log excerpts to answer the question.\n"
-            "Be specific: counts, units, timestamps, sources.\n"
-            "If you are unsure, say what is missing.\n\n"
+            "Be specific: show counts, trends, timestamps, log IDs, sources, and likely causes.\n"
+            "If information is missing, say so.\n\n"
+            f"Context summary:\n{stats_block}\n\n"
             f"Question:\n{question}\n\n"
             f"Log excerpts:\n{prompt_context}\n\n"
-            "Return exactly two lines:\n"
-            "1) Answer: <one paragraph>\n"
-            "2) Followup: <one sentence actionable next step>\n"
+            "Return the response in this exact format:\n"
+            "Summary:\n"
+            "<4-6 sentences giving a thorough narrative referencing multiple log IDs/timestamps and answering the question.>\n"
+            "Followupaction: <two sentence actionable next step tied to the findings>\n"
         )
         try:
             llm_text = (await generate_text(prompt)) or ""
             llm_text = llm_text.strip()
 
-            answer_line = ""
+            summary_lines: List[str] = []
             follow_line = ""
+            capture_summary = False
 
-            for line in llm_text.splitlines():
-                s = line.strip()
-            if s.lower().startswith("answer:"):
-                answer_line = s.split(":", 1)[1].strip()
-            elif s.lower().startswith("followup:"):
-                follow_line = s.split(":", 1)[1].strip()
+            for raw_line in llm_text.splitlines():
+                s = raw_line.strip()
+                if not s:
+                    continue
+                normalized = re.sub(r"[^a-z]", "", s.lower())
+                if normalized.startswith("summary"):
+                    capture_summary = True
+                    summary_lines.append(s.split(":", 1)[1].strip() if ":" in s else s)
+                    continue
+                if normalized.startswith("followup") or normalized.startswith("followupaction") or normalized.startswith("followaction"):
+                    follow_line = s.split(":", 1)[1].strip() if ":" in s else s
+                    capture_summary = False
+                    continue
+                if capture_summary:
+                    summary_lines.append(s)
+
+            answer_line = " ".join(l for l in summary_lines if l).strip()
 
             # If model didn't follow the exact format, DON'T throw away the whole response.
             if not answer_line and llm_text:
@@ -285,11 +326,19 @@ async def query_logs(req: QueryRequest, session: AsyncSession = Depends(get_sess
                 suggested_followup=follow_line,
             )
 
+        except GeminiError as exc:
+            logger.warning("Gemini generation failed: %s", exc)
         except Exception:
-            # If Gemini fails, do not fail the endpoint; return heuristic answer.
-            answer, followup = _heuristic_answer(question, relevant_top3)
-            return QueryResponse(answer=answer, relevant_logs=relevant_top3, suggested_followup=followup)
+            logger.exception("Unexpected Gemini failure")
 
-    # No Gemini configured
+        # Gemini failed, fall back to heuristic response.
+        answer, followup = _heuristic_answer(question, relevant_top3)
+        return QueryResponse(answer=answer, relevant_logs=relevant_top3, suggested_followup=followup)
+
+    if not gemini_enabled():
+        logger.warning("Gemini disabled or API key invalid; returning heuristic answer.")
+    elif not relevant:
+        logger.info("No relevant logs available for Gemini; returning heuristic answer.")
+
     answer, followup = _heuristic_answer(question, relevant_top3)
     return QueryResponse(answer=answer, relevant_logs=relevant_top3, suggested_followup=followup)

@@ -85,11 +85,25 @@ def _severity_rank(sev: str) -> int:
     return {"CRITICAL": 4, "ERROR": 3, "WARNING": 2, "INFO": 1, "LOW": 1, "MEDIUM": 2, "HIGH": 3}.get(s, 0)
 
 
-def _build_deterministic_summary(window: List[LogEntry]) -> tuple[list[TopIncident], list[str], list[str]]:
-    """Build deterministic incidents/patterns/actions."""
+def _compute_counts(window: List[LogEntry]) -> tuple[int, Counter[str], Counter[str], Counter[str]]:
+    """Pre-compute base counts reused across summary construction."""
     total = len(window)
-    sev_counts = Counter((r.severity or "INFO").upper() for r in window)
-    source_counts = Counter(r.source or "UNKNOWN" for r in window)
+    sev_counts: Counter[str] = Counter((r.severity or "INFO").upper() for r in window)
+    source_counts: Counter[str] = Counter(r.source or "UNKNOWN" for r in window)
+    bucket_counts: Counter[str] = Counter(_match_keyword_bucket(r.message) for r in window)
+    bucket_counts.pop(None, None)
+    return total, sev_counts, source_counts, bucket_counts
+
+
+def _build_deterministic_summary(
+    window: List[LogEntry],
+    *,
+    total: int,
+    sev_counts: Counter[str],
+    source_counts: Counter[str],
+    bucket_counts: Counter[str],
+) -> tuple[list[TopIncident], list[str]]:
+    """Build deterministic incidents/patterns (actions handled separately)."""
 
     # Clusters by (source, severity)
     by_source_sev: Dict[Tuple[str, str], List[LogEntry]] = defaultdict(list)
@@ -159,17 +173,33 @@ def _build_deterministic_summary(window: List[LogEntry]) -> tuple[list[TopIncide
     patterns: List[str] = []
     if source_counts:
         top_sources = source_counts.most_common(3)
-        patterns.append("Most activity concentrated in: " + ", ".join(f"{s} ({c})" for s, c in top_sources))
+        parts = []
+        for src, cnt in top_sources:
+            pct = (cnt / total * 100) if total else 0
+            parts.append(f"{src}: {cnt} events ({pct:.0f}%)")
+        patterns.append("Source hot spots → " + "; ".join(parts))
+
+    if total:
+        sev_parts = []
+        for label in ("CRITICAL", "ERROR", "WARNING"):
+            count = sev_counts.get(label, 0)
+            if count:
+                sev_parts.append(f"{count} {label.lower()}")
+        if sev_parts:
+            patterns.append("Severity distribution over window: " + ", ".join(sev_parts))
 
     night = [r for r in window if (r.timestamp.hour >= 22 or r.timestamp.hour < 6)]
     if total > 0 and (len(night) / total) >= 0.35:
-        patterns.append("Alerts elevated during night shift (10PM–6AM)")
+        pct = len(night) / total * 100
+        patterns.append(f"Alerts elevated during night shift (10PM–6AM) — {pct:.0f}% of events")
 
-    bucket_counts = Counter(_match_keyword_bucket(r.message) for r in window)
-    bucket_counts.pop(None, None)
     if bucket_counts:
         dominant = bucket_counts.most_common(2)
-        patterns.append("Dominant issue types: " + ", ".join(f"{b} ({c})" for b, c in dominant))
+        parts = []
+        for bucket, cnt in dominant:
+            pct = (cnt / total * 100) if total else 0
+            parts.append(f"{bucket}: {cnt} entries ({pct:.0f}%)")
+        patterns.append("Dominant issue types: " + "; ".join(parts))
 
     noisy_sources = []
     for src, _cnt in source_counts.items():
@@ -185,7 +215,15 @@ def _build_deterministic_summary(window: List[LogEntry]) -> tuple[list[TopIncide
         src, cnt = noisy_sources[0]
         patterns.append(f"{src} shows repeated alert activity ({cnt} WARNING+ entries)")
 
-    # Actions
+    return top_incidents, patterns[:5]
+
+
+def _build_fallback_actions(
+    *,
+    sev_counts: Counter[str],
+    bucket_counts: Counter[str],
+) -> list[str]:
+    """Deterministic actions used only when Gemini is unavailable."""
     actions: List[str] = []
     if sev_counts.get("CRITICAL", 0) > 0:
         actions.append("Priority inspection for sources associated with CRITICAL events")
@@ -199,10 +237,31 @@ def _build_deterministic_summary(window: List[LogEntry]) -> tuple[list[TopIncide
     if bucket_counts.get("sensor", 0) > 0:
         actions.append("Calibrate sensors on units with frequent fluctuation or calibration messages")
 
-    # Deduplicate while preserving order
-    actions = list(dict.fromkeys(actions))[:5]
+    return list(dict.fromkeys(actions))[:5]
 
-    return top_incidents, patterns[:5], actions
+
+def _format_stats_for_llm(
+    *,
+    total_entries: int,
+    sev_counts: Counter[str],
+    source_counts: Counter[str],
+    bucket_counts: Counter[str],
+) -> str:
+    """Build a stats text block to anchor Gemini's reasoning."""
+    lines: List[str] = [f"Total entries analyzed: {total_entries}"]
+    if sev_counts:
+        sev_line = ", ".join(f"{label}={sev_counts.get(label, 0)}" for label in ("CRITICAL", "ERROR", "WARNING", "INFO"))
+        lines.append(f"Severities: {sev_line}")
+    if source_counts:
+        top_sources = source_counts.most_common(5)
+        lines.append(
+            "Top sources: " + ", ".join(f"{src}={cnt}" for src, cnt in top_sources)
+        )
+    if bucket_counts:
+        lines.append(
+            "Keyword buckets: " + ", ".join(f"{bucket}={cnt}" for bucket, cnt in bucket_counts.most_common(5))
+        )
+    return "\n".join(lines)
 
 
 async def _maybe_refine_with_gemini(
@@ -213,10 +272,11 @@ async def _maybe_refine_with_gemini(
     patterns: list[str],
     actions: list[str],
     sample_logs: list[LogEntry],
+    stats_text: str,
 ) -> tuple[list[TopIncident], list[str], list[str]]:
     """
-    Ask Gemini to refine wording/insights and return strict JSON.
-    Falls back to the provided deterministic content if anything goes wrong.
+    Ask Gemini to refine incidents/patterns and (critically) propose recommended actions.
+    Falls back to the deterministic content if anything goes wrong.
     """
     if not gemini_enabled():
         return top_incidents, patterns, actions
@@ -237,6 +297,7 @@ async def _maybe_refine_with_gemini(
     prompt = (
         "You are generating a dashboard summary of industrial equipment logs.\n"
         "Refine the provided draft to be more specific and operational.\n"
+        "In particular, craft 2-4 concrete recommended actions tied to the evidence.\n"
         "Rules:\n"
         "- Use only the evidence in the log sample.\n"
         "- Do not invent units, counts, or timestamps.\n"
@@ -244,6 +305,7 @@ async def _maybe_refine_with_gemini(
         "- Return STRICT JSON only (no markdown, no extra text).\n\n"
         f"Period: {question_period}\n"
         f"Total entries: {total_entries}\n\n"
+        f"Aggregate stats:\n{stats_text}\n\n"
         f"Log sample:\n{sample}\n\n"
         f"Draft JSON to refine:\n{json.dumps(draft)}\n\n"
         "Return JSON with exactly these keys:\n"
@@ -319,17 +381,36 @@ async def get_summary(session: AsyncSession = Depends(get_session)):
     cutoff = newest_ts - timedelta(days=7)
     window = [r for r in rows if r.timestamp >= cutoff]
     total = len(window)
+    total, sev_counts, source_counts, bucket_counts = _compute_counts(window)
 
-    top_incidents, patterns, actions = _build_deterministic_summary(window)
+    top_incidents, patterns = _build_deterministic_summary(
+        window,
+        total=total,
+        sev_counts=sev_counts,
+        source_counts=source_counts,
+        bucket_counts=bucket_counts,
+    )
+    fallback_actions = _build_fallback_actions(
+        sev_counts=sev_counts,
+        bucket_counts=bucket_counts,
+    )
 
     # Gemini refinement (optional, safe fallback)
+    stats_text = _format_stats_for_llm(
+        total_entries=total,
+        sev_counts=sev_counts,
+        source_counts=source_counts,
+        bucket_counts=bucket_counts,
+    )
+
     top_incidents, patterns, actions = await _maybe_refine_with_gemini(
         question_period="Last 7 days",
         total_entries=total,
         top_incidents=top_incidents,
         patterns=patterns,
-        actions=actions,
+        actions=fallback_actions,
         sample_logs=window[:200],  # sample source; function trims to 40
+        stats_text=stats_text,
     )
 
     return SummaryResponse(

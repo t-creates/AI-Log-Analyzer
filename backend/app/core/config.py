@@ -102,7 +102,7 @@ class Settings(BaseSettings):
         description="Gemini API key (unset disables Gemini features)",
     )
     GEMINI_MODEL: str = Field(
-        default="gemini-3-pro-preview",
+        default="gemini-2.5-flash",
         description="Gemini model name",
     )
 

@@ -15,8 +15,9 @@ from __future__ import annotations
 
 from typing import AsyncGenerator
 
-from sqlalchemy import text
+from sqlalchemy import create_engine, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.orm import Session, sessionmaker
 
 from app.core.config import settings
 from app.db.models import Base
@@ -35,6 +36,28 @@ AsyncSessionLocal = async_sessionmaker(
     bind=engine,
     expire_on_commit=False,  # prevents attributes from expiring after commit (less surprising)
     class_=AsyncSession,
+)
+
+
+def _sync_database_url(url: str) -> str:
+    """
+    Convert the async SQLite URL (sqlite+aiosqlite:///) into a sync-friendly URL.
+    """
+    if url.startswith("sqlite+aiosqlite"):
+        return "sqlite" + url[len("sqlite+aiosqlite") :]
+    return url
+
+
+# Synchronous engine/session for background tasks or utilities that cannot await.
+sync_engine = create_engine(
+    _sync_database_url(settings.DATABASE_URL),
+    echo=False,
+    future=True,
+)
+SyncSessionLocal = sessionmaker(
+    bind=sync_engine,
+    expire_on_commit=False,
+    class_=Session,
 )
 
 

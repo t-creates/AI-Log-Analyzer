@@ -17,6 +17,11 @@ from __future__ import annotations
 
 from typing import Iterable, List, Sequence
 
+import numpy as np
+from sqlalchemy import delete
+
+from app.db.models import LogEmbedding
+from app.db.session import SyncSessionLocal
 from app.services.embed_service import embed_texts
 from app.services.faiss_service import add_embeddings, persist
 
@@ -55,5 +60,38 @@ def index_log_entries_for_search(
     ]
 
     embeddings = embed_texts(texts)
+
+    _persist_embeddings(log_ids, embeddings)
+
     add_embeddings(list(log_ids), embeddings)
     persist()
+
+
+def _persist_embeddings(
+    log_ids: Sequence[str],
+    embeddings: np.ndarray,
+) -> None:
+    """
+    Store embeddings in SQLite as binary blobs so FAISS can be rebuilt later.
+    """
+    if not log_ids:
+        return
+
+    with SyncSessionLocal() as session:
+        session.execute(
+            delete(LogEmbedding).where(LogEmbedding.log_id.in_(list(log_ids)))
+        )
+
+        rows = []
+        for log_id, vector in zip(log_ids, embeddings):
+            arr = np.asarray(vector, dtype="float32")
+            rows.append(
+                LogEmbedding(
+                    log_id=log_id,
+                    vector=arr.tobytes(),
+                    dimension=int(arr.shape[0]),
+                )
+            )
+
+        session.add_all(rows)
+        session.commit()
