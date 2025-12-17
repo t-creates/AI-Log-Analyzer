@@ -33,6 +33,33 @@ os.environ["VECLIB_MAXIMUM_THREADS"] = "1"
 os.environ["NUMEXPR_NUM_THREADS"] = "1"
 
 
+def _ensure_hf_cache_dir() -> None:
+    """
+    Make sure Hugging Face caches live in a writable directory.
+
+    Priority:
+    1. Respect any of HF_HOME / HF_HUB_CACHE / TRANSFORMERS_CACHE set by env.
+    2. Otherwise default to ./.cache/huggingface (repo-relative) and set HF_HOME.
+    """
+    candidate_vars = ("HF_HOME", "HF_HUB_CACHE", "TRANSFORMERS_CACHE")
+    for var in candidate_vars:
+        path = os.environ.get(var)
+        if path:
+            os.makedirs(path, exist_ok=True)
+            logger.info("Using %s for HuggingFace cache (%s)", path, var)
+            return
+
+    default_cache = os.path.abspath(os.path.join(".", ".cache", "huggingface"))
+    os.makedirs(default_cache, exist_ok=True)
+    os.environ["HF_HOME"] = default_cache
+    logger.info(
+        "No HuggingFace cache env set; defaulting HF_HOME to %s", default_cache
+    )
+
+
+_ensure_hf_cache_dir()
+
+
 # -------------------------
 # Response helpers (MVP)
 # -------------------------
