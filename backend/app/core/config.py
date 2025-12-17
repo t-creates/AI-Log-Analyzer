@@ -82,7 +82,7 @@ class Settings(BaseSettings):
     # Embeddings / FAISS
     # -----------------------
     EMBED_MODEL: str = Field(
-        default="sentence-transformers/all-MiniLM-L4-v2",
+        default="all-MiniLM-L4-v2",
         description="Sentence-Transformers model name/path",
     )
     FAISS_INDEX_PATH: str = Field(
