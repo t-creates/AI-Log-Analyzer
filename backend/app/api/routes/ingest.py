@@ -31,8 +31,8 @@ from app.utils.parsers import parse_csv_bytes, parse_txt_bytes
 
 logger = logging.getLogger(__name__)
 
-BACKEND_ROOT = Path(__file__).resolve().parents[4]
-SAMPLE_LOG_PATH = BACKEND_ROOT / "tmp" / "sample_logs_100.csv"
+APP_ROOT = Path(__file__).resolve().parents[2]
+SAMPLE_LOG_PATH = APP_ROOT / "sample_data" / "sample_logs_100.csv"
 
 router = APIRouter()
 
