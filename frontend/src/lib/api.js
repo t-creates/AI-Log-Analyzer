@@ -45,6 +45,10 @@ export function uploadLogFile(file) {
   return request("/upload", { method: "POST", body: form });
 }
 
+export function uploadSampleLogs() {
+  return request("/upload/sample", { method: "POST" });
+}
+
 export function postQuery(question) {
   return json("/query", { method: "POST", obj: { question } });
 }
